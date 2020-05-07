@@ -127,39 +127,10 @@ resource "aws_route_table_association" "rta-subnet" {
 }
 
 # SECURITY GROUPS #
-resource "aws_security_group" "elb-sg" {
-  name   = "nifi_elb_sg"
-  vpc_id = aws_vpc.vpc.id
 
-  #Allow HTTP from anywhere
-  ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    from_port   = 8080
-    to_port     = 8080
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  #allow all outbound
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = merge(local.common_tags, { Name = "${var.project_tag}-${var.environment_tag}-elb-sg" })
-}
-
-# Nginx security group
-resource "aws_security_group" "nifi-sg" {
-  name   = "nifi_sg"
+# Zookeeper security group
+resource "aws_security_group" "zoo-sg" {
+  name   = "${var.project_tag}-zoo_sg"
   vpc_id = aws_vpc.vpc.id
 
   # SSH access from anywhere
@@ -178,12 +149,51 @@ resource "aws_security_group" "nifi-sg" {
     cidr_blocks = [var.network_address_space]
   }
 
-  # HTTP Access from anywhere, for checking.
+  #Allow individual box access on 8080, so that can pick which NiFi instance to develop on.
+  ingress {
+    from_port   = 2888
+    to_port     = 2888
+    protocol    = "tcp"
+    cidr_blocks = [var.network_address_space]
+  }
+
+  #Allow individual box access on 8080, so that can pick which NiFi instance to develop on.
+  ingress {
+    from_port   = 3888
+    to_port     = 3888
+    protocol    = "tcp"
+    cidr_blocks = [var.network_address_space]
+  }
+
+  # outbound internet access
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(local.common_tags, { Name = "${var.project_tag}-${var.environment_tag}-nifi-sg" })
+}
+
+resource "aws_security_group" "nifi-sg" {
+  name   = "${var.project_tag}-nifi_sg"
+  vpc_id = aws_vpc.vpc.id
+
+  # SSH access from anywhere
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # HTTP access from the VPC
   ingress {
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = [var.network_address_space]
   }
 
   #Allow individual box access on 8080, so that can pick which NiFi instance to develop on.
@@ -203,44 +213,6 @@ resource "aws_security_group" "nifi-sg" {
   }
 
   tags = merge(local.common_tags, { Name = "${var.project_tag}-${var.environment_tag}-nifi-sg" })
-}
-
-# LOAD BALANCER #
-resource "aws_elb" "zoo-web" {
-  name = "zoo-elb"
-
-  subnets         = aws_subnet.subnet[*].id
-  security_groups = [aws_security_group.elb-sg.id]
-  instances       = aws_instance.zoo[*].id
-
-
-  listener {
-    instance_port     = 80
-    instance_protocol = "http"
-    lb_port           = 80
-    lb_protocol       = "http"
-  }
-
-  tags = merge(local.common_tags, { Name = "${var.project_tag}-${var.environment_tag}-elb" })
-}
-
-# LOAD BALANCER #
-resource "aws_elb" "nifi-web" {
-  name = "nifi-elb"
-
-  subnets         = aws_subnet.subnet[*].id
-  security_groups = [aws_security_group.elb-sg.id]
-  instances       = aws_instance.nifi[*].id
-
-
-  listener {
-    instance_port     = 80
-    instance_protocol = "http"
-    lb_port           = 80
-    lb_protocol       = "http"
-  }
-
-  tags = merge(local.common_tags, { Name = "${var.project_tag}-${var.environment_tag}-elb" })
 }
 
 # INSTANCES #
@@ -266,26 +238,18 @@ resource "aws_instance" "nifi" {
   # Provisioners
   provisioner "remote-exec" {
     inline = [
-      "sudo mkdir -p /opt/go",
-      "sudo chmod 777 /opt/go/",
-      "sudo yum install go -y"
-    ]
-  }
-
-  provisioner "file" {
-    source      = "./index.html"
-    destination = "/opt/go/index.html"
-  }
-
-  provisioner "file" {
-    source      = "./server.go"
-    destination = "/opt/go/server.go"
-  }
-
-  provisioner "remote-exec" {
-    inline = [
-      "go build /opt/go/server.go",
-      "sudo go run /opt/go/server.go &",
+      "sudo yum update -y",
+      "sudo yum install java-1.8.0-openjdk-devel -y",
+      "sudo adduser nifi",
+      "sudo mkdir -p /opt/nifi-download",
+      "sudo mkdir -p /opt/nifi",
+      "sudo chown nifi:nifi /opt/nifi",
+      "sudo chown nifi:nifi /opt/nifi-download",
+      "sudo -u nifi curl http://mirror.ox.ac.uk/sites/rsync.apache.org/nifi/1.11.4/nifi-1.11.4-bin.tar.gz --output /opt/nifi-download/nifi-1.11.4-bin.tar.gz",
+      "sudo -u nifi curl http://apache.mirror.anlx.net/nifi/1.11.4/nifi-toolkit-1.11.4-bin.tar.gz --output /opt/nifi-download/nifi-toolkit-1.11.4-bin.tar.gz",
+      "sudo -u nifi tar -xf /opt/nifi-download/nifi-1.11.4-bin.tar.gz -C /opt/nifi",
+      "sudo -u nifi tar -xf /opt/nifi-download/nifi-toolkit-1.11.4-bin.tar.gz -C /opt/nifi",
+      "sudo -u nifi /opt/nifi/nifi-1.11.4/bin/nifi.sh start"
     ]
   }
 }
@@ -305,7 +269,6 @@ resource "aws_instance" "zoo" {
     host = self.public_ip
     user = "ec2-user"
     private_key = file(var.private_key_path)
-
   }
 
   tags = merge(local.common_tags, { Name = "${var.project_tag}-${var.environment_tag}-zoo-${count.index + 1}" })
@@ -313,9 +276,15 @@ resource "aws_instance" "zoo" {
   # Provisioners
   provisioner "remote-exec" {
     inline = [
-      "sudo yum install nginx -y",
-      "sudo service nginx start",
-      "echo '<html><head><title>Green Team Server</title></head><body style=\"background-color:#77A032\"><p style=\"text-align: center;\"><span style=\"color:#FFFFFF;\"><span style=\"font-size:28px;\">Green Team</span></span></p></body></html>' | sudo tee /usr/share/nginx/html/index.html"
+      "sudo yum update -y",
+      "sudo yum install java-1.8.0-openjdk-devel -y",
+      "sudo adduser zookeeper",
+      "sudo mkdir -p /opt/zookeeper-download",
+      "sudo mkdir -p /opt/zookeeper",
+      "sudo chown zookeeper:zookeeper /opt/zookeeper",
+      "sudo chown zookeeper:zookeeper /opt/zookeeper-download",
+      "sudo -u zookeeper curl http://apache.mirror.anlx.net/zookeeper/zookeeper-3.6.1/apache-zookeeper-3.6.1-bin.tar.gz --output /opt/zookeeper-download/apache-zookeeper-3.6.1-bin.tar.gz",
+      "sudo -u zookeeper tar -xf /opt/zookeeper-download/apache-zookeeper-3.6.1-bin.tar.gz -C /opt/zookeeper"
     ]
   }
 }
@@ -331,16 +300,4 @@ output "nifi_public_dns" {
 output "zookeeper_public_dns" {
   value = aws_instance.zoo[*].public_dns
 }
-
-
-output "aws_zooelb_public_dns" {
-  value = aws_elb.zoo-web.dns_name
-}
-
-output "aws_nifielb_public_dns" {
-  value = aws_elb.nifi-web.dns_name
-}
-
-
-
 
