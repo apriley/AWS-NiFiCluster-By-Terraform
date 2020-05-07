@@ -239,6 +239,7 @@ resource "aws_instance" "nifi" {
   provisioner "remote-exec" {
     inline = [
       "sudo yum update -y",
+      "sudo yum remove java-1.7.0-openjdk-1.7.0.251-2.6.21.0.82.amzn1.x86_64 -y",
       "sudo yum install java-1.8.0-openjdk-devel -y",
       "sudo adduser nifi",
       "sudo mkdir -p /opt/nifi-download",
@@ -277,6 +278,7 @@ resource "aws_instance" "zoo" {
   provisioner "remote-exec" {
     inline = [
       "sudo yum update -y",
+      "sudo yum remove java-1.7.0-openjdk-1.7.0.251-2.6.21.0.82.amzn1.x86_64 -y",
       "sudo yum install java-1.8.0-openjdk-devel -y",
       "sudo adduser zookeeper",
       "sudo mkdir -p /opt/zookeeper-download",
