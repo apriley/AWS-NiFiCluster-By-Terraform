@@ -2,25 +2,7 @@
 # VARIABLES
 ##################################################################################
 
-variable "aws_access_key" {}
-variable "aws_secret_key" {}
-variable "private_key_path" {}
-variable "key_name" {}
-variable "application_version" {}
-variable "region" {
-  default = "eu-west-2"
-}
 
-variable "network_address_space" {
-  default = "10.1.0.0/16"
-}
-
-variable "subnet1_address_space" {
-  default = "10.1.0.0/24"
-}
-
-variable "project_tag" {}
-variable "environment_tag" {}
 
 
 ##################################################################################
@@ -48,25 +30,17 @@ provider "aws" {
 # DATA
 ##################################################################################
 
-data "aws_ami" "aws-linux" {
+#Define our AWS AMI (Amazon Machine Image), we are getting the lated RHEL 8 image
+data "aws_ami" "aws-red_hat" {
   most_recent = true
-  owners      = ["amazon"]
-
-  filter {
-    name   = "name"
-    values = ["amzn-ami-hvm*"]
-  }
-
-  filter {
-    name   = "root-device-type"
-    values = ["ebs"]
-  }
-
+  name_regex = "RHEL-8.*_HVM-.*x86.*"
+  owners     = ["309956199498"] #Red Hat
   filter {
     name   = "virtualization-type"
     values = ["hvm"]
   }
 }
+
 
 data "aws_availability_zones" "available" {}
 
@@ -151,7 +125,7 @@ resource "aws_security_group" "doc" {
 
 # INSTANCES #
 resource "aws_instance" "doc" {
-  ami = data.aws_ami.aws-linux.id
+  ami = data.aws_ami.aws-red_hat.id
   # Could be nano in a paid env
   instance_type = "t2.micro"
   subnet_id = aws_subnet.subnet1.id
@@ -159,49 +133,89 @@ resource "aws_instance" "doc" {
     aws_security_group.doc.id]
   key_name = var.key_name
 
-  connection {
-    type = "ssh"
-    host = self.public_ip
-    user = "ec2-user"
-    private_key = file(var.private_key_path)
-
-  }
-
   tags = merge(local.common_tags, { Name = "${var.project_tag}-${var.environment_tag}-doc" })
 
-  # Provisioners
+}
+
+resource "aws_instance" "ansible_server" {
+  ami = data.aws_ami.aws-red_hat.id
+  instance_type = "t2.micro"
+  key_name = var.key_name
+  subnet_id = aws_subnet.subnet1.id
+  vpc_security_group_ids = [
+    aws_security_group.doc.id]
+
+  tags = { Name = "Ansible Server"}
+
+}
+
+#Install and Run ansible playbook on Ansible Server
+resource "null_resource" "ansible-provisioner" {
+  //Create directory for the playbook
+  provisioner "remote-exec" {
+    inline = ["mkdir -p ~/test-playbook"]
+  }
+
+  //Create directory for the files
+  provisioner "remote-exec" {
+    inline = ["mkdir -p ~/test-playbook/files"]
+  }
+
+  //Move the playbook over
+  provisioner "file" {
+    source      = "${path.module}/ansible/playbook.yml"
+    destination = "~/test-playbook/playbook.yml"
+  }
+  //Move the key over so that ansible can connect to the remote boxes
+  provisioner "file" {
+    source     = var.private_key_path
+    destination = "~/test-playbook/key"
+  }
+  //Lock the key down
   provisioner "remote-exec" {
     inline = [
-      "sudo yum update -y",
-      "sudo yum remove java-1.7.0-openjdk-1.7.0.251-2.6.21.0.82.amzn1.x86_64 -y",
-      "sudo yum install java-1.8.0-openjdk-devel -y",
-      "sudo adduser document",
-      "sudo mkdir -p /opt/document/data",
-      "sudo chown document:document /opt/document",
-      "sudo chown document:document /opt/document/data",
+      "chmod 400 ~/test-playbook/key"
     ]
   }
-
-  # Copies the myapp.conf file to /etc/myapp.conf
+  //Create a hosts file with the hosts that we just created
   provisioner "file" {
-    source      = "C:\\Users\\andriley\\workspace\\document\\target\\document-${var.application_version}.jar"
-    destination = "/opt/document/document-${var.application_version}.jar"
+    content = templatefile("${path.module}/ansible/templates/ansible-hosts.tmpl", {
+      nifi_nodes : aws_instance.doc.public_dns,
+    })
+    destination = "~/test-playbook/inventory"
   }
 
-  # Copies the myapp.conf file to /etc/myapp.conf
+  //Move the application properties file
   provisioner "file" {
-    source      = "files/document.application.properties"
-    destination = "/opt/document/application.properties"
+    source      = "${path.module}/ansible/files/application.properties"
+    destination = "~/test-playbook/files/application.properties"
   }
 
+  //Move the service file
+  provisioner "file" {
+    source      = "${path.module}/ansible/files/document.service"
+    destination = "~/test-playbook/files/document.service"
+  }
+
+  //Move the application jar over
+  provisioner "file" {
+    source      = "${path.module}/ansible/files/${var.application}"
+    destination = "~/test-playbook/files/${var.application}"
+  }
+
+  //Run the playbook from the bsation onto the deployed hosts
   provisioner "remote-exec" {
     inline = [
-      "sudo ln -s /opt/document/document-${var.application_version}.jar /etc/init.d/document",
-      "sudo -u document service document start"
+      "/usr/libexec/platform-python -m pip install --user ansible",
+      "cd ~/test-playbook && ansible-playbook -i inventory --private-key key --ssh-common-args='-o StrictHostKeyChecking=no' playbook.yml"
     ]
   }
-
-
+  connection {
+    type        = "ssh"
+    host        = aws_instance.ansible_server.public_ip
+    user        = "ec2-user"
+    private_key = file(var.private_key_path)
+  }
 
 }
 

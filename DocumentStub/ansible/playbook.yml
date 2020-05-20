@@ -1,0 +1,77 @@
+- name: Common setup accross all hosts
+  hosts: "*"
+  tasks:
+    - name: Update Yum
+      yum:
+        name: "*"
+        state: latest
+      become: yes
+      become_user: root
+    - name: Install Java
+      yum:
+        name: "java-1.8.0-openjdk"
+        state: present
+      become: yes
+      become_user: root
+    - name: Export JAVA_HOME
+      lineinfile: dest=.bash_profile line='JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.252.b09-2.el8_1.x86_64/jre/bin/java'
+
+- name: Create Document User
+  hosts: "*"
+  become: yes
+  become_user: root
+  tasks:
+    - name: Create document user
+      user:
+        name: document
+    - name: Create exec folder
+      file:
+        path: /opt/document
+        state: directory
+        owner: document
+        group: document
+        mode: '0755'
+
+- name: Install Document
+  hosts: "*"
+  become: yes
+  become_user: document
+  tasks:
+    - name: Create data folder
+      file:
+        path: /opt/document/data
+        state: directory
+        owner: document
+        group: document
+        mode: '0755'
+    - name: copy jar
+      copy:
+        src: "~/test-playbook/files/document-0.0.1-SNAPSHOT.jar"
+        dest: "/opt/document/"
+        owner: document
+        group: document
+        mode: '0755'
+    - name: copy properties
+      copy:
+        src: "~/test-playbook/files/application.properties"
+        dest: "/opt/document/"
+        owner: document
+        group: document
+        mode: '0755'
+
+- name: Create and Run Service
+  hosts: "*"
+  become: yes
+  become_user: root
+  tasks:
+    - name: copy service file
+      copy:
+        src: "~/test-playbook/files/document.service"
+        dest: "/etc/systemd/system/"
+        mode: '0755'
+    - name: Start Document Service
+      systemd:
+        state: started
+        enabled: yes
+        daemon_reload: yes
+        name: document

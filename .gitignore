@@ -79,6 +79,7 @@ fabric.properties
 
 # Local .terraform directories
 **/.terraform/*
+*.jar
 
 # .tfstate files
 *.tfstate

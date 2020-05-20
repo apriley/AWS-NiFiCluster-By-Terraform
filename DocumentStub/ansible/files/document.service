@@ -1,0 +1,14 @@
+[Unit]
+Description=Document Stub
+After=syslog.target
+
+[Service]
+User=document
+Group=document
+ExecStart=/opt/document/document-0.0.1-SNAPSHOT.jar
+SyslogIdentifier=Document
+SuccessExitStatus=143
+Type=simple
+
+[Install]
+WantedBy=multi-user.target
